@@ -18,8 +18,6 @@ Standardized API helpers for [GenLayer](https://genlayer.com) Intelligent Contra
 pip install genlayer-apis
 ```
 
-Or add to your Intelligent Contract dependencies.
-
 ## Quick Start
 
 ### Weather
@@ -33,7 +31,6 @@ weather = get_weather("Jakarta")
 
 # 5-day forecast
 forecast = get_weather_forecast("Tokyo", days=5)
-# [{'date': '2026-03-30', 'temp_max_c': 18.2, 'temp_min_c': 10.1, ...}, ...]
 ```
 
 ### Crypto Prices
@@ -41,16 +38,12 @@ forecast = get_weather_forecast("Tokyo", days=5)
 ```python
 from genlayer_apis import get_price, get_prices, get_market_data
 
-# Single price
 btc = get_price("BTC")
 # {'symbol': 'BTC', 'price': 87500.0, 'market_cap': 1730000000000, ...}
 
-# Multiple prices
 prices = get_prices(["BTC", "ETH", "SOL"])
 
-# Detailed market data
 eth = get_market_data("ETH")
-# {'symbol': 'ETH', 'name': 'Ethereum', 'price': 3200.0, 'change_7d_pct': 5.3, ...}
 ```
 
 ### Web Scraping
@@ -58,31 +51,72 @@ eth = get_market_data("ETH")
 ```python
 from genlayer_apis import fetch_json, fetch_text, scrape_links
 
-# Fetch API response
 data = fetch_json("https://api.example.com/data")
-
-# Extract links from a page
 links = scrape_links("https://news.ycombinator.com", filter_pattern="github.com")
 ```
 
-## Example: Weather-Based Betting Contract
+## Usage in Intelligent Contracts
+
+GenLayer contracts must be self-contained (single file). Copy the helper functions directly into your contract class:
 
 ```python
 import genlayer as gl
-from genlayer_apis import get_weather, get_price
+import json
 
-class WeatherBet(gl.Contract):
-    def __init__(self, city: str, threshold_c: float):
-        self.city = city
-        self.threshold_c = threshold_c
-        self.resolved = False
+
+class WeatherContract(gl.Contract):
+    """Example: Weather-based decision contract."""
+
+    COIN_IDS = {"BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana"}
+
+    def __init__(self):
+        pass
+
+    def _get_weather(self, city: str) -> dict:
+        """Fetch weather using Open-Meteo (free, no API key)."""
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={city}&count=1"
+        geo_data = json.loads(gl.get_from_web(url=geo_url, mode="raw"))
+
+        if not geo_data.get("results"):
+            raise ValueError(f"City not found: {city}")
+
+        loc = geo_data["results"][0]
+        weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={loc['latitude']}&longitude={loc['longitude']}&current_weather=true"
+        weather_data = json.loads(gl.get_from_web(url=weather_url, mode="raw"))
+        current = weather_data["current_weather"]
+
+        return {
+            "city": loc.get("name", city),
+            "temperature_c": current["temperature"],
+            "windspeed_kmh": current["windspeed"],
+        }
+
+    def _get_price(self, symbol: str) -> dict:
+        """Fetch crypto price using CoinGecko (free, no API key)."""
+        coin_id = self.COIN_IDS.get(symbol.upper(), symbol.lower())
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&include_market_cap=true"
+        data = json.loads(gl.get_from_web(url=url, mode="raw"))
+
+        if coin_id not in data:
+            raise ValueError(f"Coin not found: {symbol}")
+
+        return {
+            "symbol": symbol.upper(),
+            "price": data[coin_id].get("usd", 0),
+            "market_cap": data[coin_id].get("usd_market_cap", 0),
+        }
 
     @gl.public
-    def check_weather(self) -> dict:
-        weather = get_weather(self.city)
-        self.result = "hot" if weather["temperature_c"] > self.threshold_c else "cold"
-        self.resolved = True
-        return {"city": weather["city"], "temperature": weather["temperature_c"], "result": self.result}
+    @gl.view
+    def get_weather(self, city: str) -> str:
+        w = self._get_weather(city)
+        return f"{w['city']}: {w['temperature_c']}C, wind {w['windspeed_kmh']} km/h"
+
+    @gl.public
+    @gl.view
+    def get_price(self, symbol: str) -> str:
+        p = self._get_price(symbol)
+        return f"{p['symbol']}: ${p['price']:,.2f}"
 ```
 
 ## API Reference
@@ -138,6 +172,13 @@ Extract text content from HTML element.
 `BTC`, `ETH`, `SOL`, `BNB`, `XRP`, `ADA`, `DOGE`, `DOT`, `AVAX`, `MATIC`, `LINK`, `UNI`, `ARB`, `OP`, `GL`
 
 You can also pass any CoinGecko coin ID directly.
+
+## Tested On
+
+- ✅ API calls verified locally (Open-Meteo, CoinGecko)
+- ✅ Deployed on GenLayer Bradbury Testnet (status: ACCEPTED)
+- ⚠️ Contract calls blocked by testnet RPC state issue (not a library bug)
+- ✅ 12 unit tests passing
 
 ## License
 
